@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>SUNO-BEAT — Too Loud to Die</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#07080c; --panel:#141620; --ink:#eef1f6; --dim:#848aa0; --line:#262a38;
+    --kick:#ff5470; --snare:#ffb43d; --hat:#6fe3a1; --guitar:#4fb3ff; --accent:#7c6cff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+    font-family:"JetBrains Mono",ui-monospace,monospace;-webkit-user-select:none;user-select:none;
+    -webkit-tap-highlight-color:transparent;touch-action:none;overscroll-behavior:none;-webkit-touch-callout:none}
+  #stage{position:fixed;inset:0}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .hud{position:absolute;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:flex-start;
+    padding:10px 14px;pointer-events:none;font-size:10px;color:var(--dim);letter-spacing:.1em}
+  .hud b{color:var(--ink);font-size:18px;display:block;letter-spacing:0}
+  #quit{pointer-events:auto;background:rgba(0,0,0,.45);border:1px solid var(--line);color:var(--dim);
+    font:inherit;font-size:12px;padding:6px 12px;border-radius:4px;cursor:pointer;letter-spacing:0}
+  .screen{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    padding:20px;background:rgba(7,8,12,.94);z-index:5;overflow:auto}
+  .screen.hidden{display:none}
+  .wrap{display:flex;flex-direction:column;align-items:center;gap:15px;text-align:center;max-width:360px;width:100%}
+  h1{font-family:"Dela Gothic One",sans-serif;font-weight:400;font-size:40px;line-height:1;letter-spacing:.01em}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--dim);font-size:12px;line-height:1.7}
+  .song{font-family:"Dela Gothic One",sans-serif;font-size:18px}
+  .diffs{display:flex;gap:8px}
+  .diff{font:inherit;font-weight:700;font-size:13px;padding:10px 12px;border-radius:6px;cursor:pointer;
+    background:var(--panel);color:var(--ink);border:2px solid var(--line);min-width:84px}
+  .diff small{display:block;font-weight:500;color:var(--dim);font-size:10px;margin-top:3px}
+  .diff.on{border-color:var(--accent);background:#1d1a3a}
+  .row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);width:100%}
+  .row label{flex:1;text-align:left}
+  .row button{font:inherit;font-weight:700;width:34px;height:30px;border-radius:5px;border:1px solid var(--line);
+    background:var(--panel);color:var(--ink);cursor:pointer;font-size:16px;line-height:1}
+  .row output{width:64px;text-align:center;color:var(--ink);font-weight:700}
+  .go{font-family:"Dela Gothic One",sans-serif;font-size:22px;padding:12px 48px;border:none;border-radius:8px;
+    background:var(--accent);color:#fff;cursor:pointer;letter-spacing:.06em}
+  .go:disabled{opacity:.4;cursor:wait}
+  .legend{display:flex;gap:12px;font-size:10px;color:var(--dim)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+  .note{font-size:10.5px;color:var(--dim);line-height:1.6}
+  .res{display:grid;grid-template-columns:auto auto;gap:5px 22px;font-size:14px;text-align:left}
+  .res dt{color:var(--dim)} .res dd{text-align:right;font-weight:700}
+  .rank{font-family:"Dela Gothic One",sans-serif;font-size:72px;line-height:1;color:var(--accent)}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div class="hud" id="hud" style="display:none">
+    <div>SCORE<b id="score">0</b></div>
+    <div><button id="quit">やめる</button></div>
+  </div>
+
+  <div class="screen" id="menu">
+    <div class="wrap">
+      <h1>SUNO<span>-</span>BEAT</h1>
+      <div class="sub">落ちてくる球を、下のラインで打ち返す</div>
+      <div class="song" id="songTitle">—</div>
+      <div class="legend" id="legend"></div>
+      <div class="diffs" id="diffs"></div>
+      <div class="row"><label>スピード</label><button data-s="speed" data-d="-1">−</button><output id="speedV"></output><button data-s="speed" data-d="1">＋</button></div>
+      <div class="row"><label>判定ずらし</label><button data-s="offset" data-d="-1">−</button><output id="offsetV"></output><button data-s="offset" data-d="1">＋</button></div>
+      <div class="row"><label>タッチ音</label><button data-s="sfx" data-d="-1">−</button><output id="sfxV"></output><button data-s="sfx" data-d="1">＋</button></div>
+      <button class="go" id="go" disabled>LOADING…</button>
+      <div class="note">スマホは縦持ちで、球がラインに重なった瞬間にその場所をタッチ。PCはマウス、またはキーボード S D F J K（ラインを5分割）。音と判定がずれる時は「判定ずらし」（遅れて聞こえるなら＋）。</div>
+    </div>
+  </div>
+
+  <div class="screen hidden" id="result">
+    <div class="wrap">
+      <div class="song" id="resTitle"></div>
+      <div class="rank" id="rank">A</div>
+      <dl class="res" id="res"></dl>
+      <button class="go" id="again">もう一回</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const PART_COLORS = ['--kick', '--snare', '--hat', '--guitar'].map(css);
+const PART_NAMES = ['KICK', 'SNARE', 'HAT', 'GUITAR'];
+const PART_SIZE = [1.15, 1.0, 0.8, 1.05];        // relative ball radius per part
+const KEYS = ['s', 'd', 'f', 'j', 'k'];
+const WIN = { perfect: 0.045, great: 0.090, good: 0.135 };
+const PTS = { perfect: 300, great: 200, good: 100 };
+const LEAD_IN = 2.6;
+
+const $ = id => document.getElementById(id);
+const cv = $('cv'), g = cv.getContext('2d');
+let chart, ctx, rawMix, mixBuf, sfxBuf, sfxGain, src = null;
+let set = { diff: 'normal', speed: 1.0, offset: 0, sfx: 5 };
+let state = 'menu', startAt = 0, objs = [], st = {};
+const ripples = [], pops = [], wallFlash = [], shots = [];
+let comboPop = 0;
+
+// ---------- settings ----------
+try { Object.assign(set, JSON.parse(localStorage.getItem('sunobeat2') || '{}')); } catch (e) {}
+const save = () => { try { localStorage.setItem('sunobeat2', JSON.stringify(set)); } catch (e) {} };
+const STEP = { speed: [0.1, 0.5, 2.0], offset: [5, -150, 150], sfx: [1, 0, 10] };
+function showVals() {
+  $('speedV').textContent = set.speed.toFixed(1) + 'x';
+  $('offsetV').textContent = (set.offset > 0 ? '+' : '') + set.offset + 'ms';
+  $('sfxV').textContent = set.sfx === 0 ? 'OFF' : set.sfx * 10 + '%';
+}
+document.querySelectorAll('.row button').forEach(b => b.addEventListener('click', () => {
+  const k = b.dataset.s, [step, lo, hi] = STEP[k];
+  set[k] = Math.round(Math.min(hi, Math.max(lo, set[k] + step * +b.dataset.d)) * 100) / 100;
+  showVals(); save();
+  if (k === 'sfx' && ctx) { setSfxGain(); playSfx(); }
+}));
+showVals();
+$('legend').innerHTML = PART_NAMES.map((n, i) => `<span><i style="background:${PART_COLORS[i]}"></i>${n}</span>`).join('');
+
+// ---------- layout ----------
+let W = 0, H = 0, F = {};
+function layout() {
+  W = innerWidth; H = innerHeight;
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const fw = Math.min(W - 16, H * 0.62);            // playfield width (portrait column on PC too)
+  F = { x: (W - fw) / 2, w: fw, top: H * 0.13, line: H * 0.83, r: fw * 0.058 };
+}
+addEventListener('resize', layout); layout();
+const fx = xn => F.x + xn * F.w;                      // normalised 0..1 -> px
+
+// ---------- chart -> balls with bouncing paths ----------
+// Each ball lands on the judge line at time t, position x (0..1).
+// Its path is a straight line in "unfolded" space u; walls are mirrors, so x = fold(u).
+function fold(u) { const m = ((u % 2) + 2) % 2; return m <= 1 ? m : 2 - m; }
+function rng(seed) { let s = seed >>> 0 || 1; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296; }
+function buildBalls(notes, diff) {
+  const R = rng(diff.length * 7919 + notes.length);
+  const sorted = notes.slice().sort((a, b) => a.t - b.t || a.lane - b.lane);
+  const out = []; let prevX = 0.5, prevT = -9, prevGroupX = [];
+  const margin = 0.09;
+  for (const n of sorted) {
+    const gap = n.t - prevT;
+    let x;
+    if (gap < 0.012) {                               // chord: keep clear of balls landing at the same moment
+      do { x = margin + R() * (1 - 2 * margin); } while (prevGroupX.some(px => Math.abs(px - x) < 0.28));
+      prevGroupX.push(x);
+    } else {
+      const reach = Math.min(0.75, Math.max(0.16, gap * 0.9));   // short gaps -> small hand movement
+      x = prevX + (R() * 2 - 1) * reach;
+      if (x < margin) x = 2 * margin - x; if (x > 1 - margin) x = 2 * (1 - margin) - x;
+      x = Math.min(1 - margin, Math.max(margin, x));
+      prevGroupX = [x];
+    }
+    prevX = x; prevT = n.t;
+    const bounces = R() < 0.35 ? 0 : R() < 0.7 ? 1 : 2;
+    const dir = R() < 0.5 ? -1 : 1;
+    const u1 = x, u0 = x + dir * (bounces + 0.25 + R() * 0.5);
+    out.push({ t: n.t, part: n.lane, x, u0, u1, j: null, hitAt: 0 });
+  }
+  return out;
+}
+const travel = () => 1.55 / set.speed;                // seconds from top line to judge line
+
+// ---------- load ----------
+async function load() {
+  chart = await (await fetch('chart.json')).json();
+  $('songTitle').textContent = chart.title + ' · ' + chart.bpm + ' BPM';
+  if (!chart.charts[set.diff]) set.diff = 'normal';
+  $('diffs').innerHTML = Object.keys(chart.charts).map(k =>
+    `<button class="diff${k === set.diff ? ' on' : ''}" data-k="${k}">${k.toUpperCase()}<small>${chart.charts[k].length} notes</small></button>`).join('');
+  $('diffs').onclick = e => { const b = e.target.closest('.diff'); if (!b) return; set.diff = b.dataset.k; save();
+    [...$('diffs').children].forEach(c => c.classList.toggle('on', c === b)); };
+  rawMix = await (await fetch('mix.mp3')).arrayBuffer();
+  $('go').disabled = false; $('go').textContent = 'START';
+}
+load().catch(err => { $('go').textContent = '読み込み失敗'; console.error(err); });
+
+// ---------- audio ----------
+function unlockAudio() {                               // must run inside the tap (iOS)
+  if (!ctx) {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    sfxGain = ctx.createGain(); sfxGain.connect(ctx.destination); setSfxGain();
+    sfxBuf = makeSfx();
+  }
+  if (ctx.state !== 'running') ctx.resume();
+  const s = ctx.createBufferSource(); s.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); s.connect(ctx.destination); s.start(0);
+}
+function setSfxGain() { if (sfxGain) sfxGain.gain.value = set.sfx / 10 * 0.9; }
+function makeSfx() {   // round, glassy "pok": two detuned sines with a quick pitch drop + tiny noise transient
+  const sr = ctx.sampleRate, n = Math.floor(sr * 0.08), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0);
+  let ph1 = 0, ph2 = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / sr, f = 1500 * Math.exp(-t * 18) + 900;
+    ph1 += 2 * Math.PI * f / sr; ph2 += 2 * Math.PI * f * 1.5 / sr;
+    const env = Math.exp(-t * 55), click = (Math.random() * 2 - 1) * Math.exp(-t * 900);
+    d[i] = 0.5 * Math.sin(ph1) * env + 0.18 * Math.sin(ph2) * env + 0.25 * click;
+  }
+  return b;
+}
+function playSfx() { if (!ctx || set.sfx === 0) return; const s = ctx.createBufferSource(); s.buffer = sfxBuf; s.connect(sfxGain); s.start(); }
+function songTime() {
+  if (!ctx) return -LEAD_IN;
+  let t;
+  if (ctx.getOutputTimestamp) {
+    const ts = ctx.getOutputTimestamp();
+    t = ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
+    if (!isFinite(t) || ts.contextTime === 0) t = ctx.currentTime - (ctx.outputLatency || ctx.baseLatency || 0);
+  } else t = ctx.currentTime - (ctx.baseLatency || 0);
+  return t - startAt - set.offset / 1000;
+}
+
+// ---------- game flow ----------
+async function start() {
+  $('go').disabled = true; $('go').textContent = '準備中…';
+  if (!mixBuf) mixBuf = await ctx.decodeAudioData(rawMix.slice(0));
+  if (ctx.state !== 'running') await ctx.resume();
+  objs = buildBalls(chart.charts[set.diff], set.diff);
+  st = { score: 0, combo: 0, max: 0, perfect: 0, great: 0, good: 0, miss: 0, cursor: 0, end: chart.duration + 1.0 };
+  ripples.length = pops.length = wallFlash.length = shots.length = 0;
+  startAt = ctx.currentTime + LEAD_IN;
+  src = ctx.createBufferSource(); src.buffer = mixBuf; src.connect(ctx.destination); src.start(startAt);
+  state = 'play';
+  ['menu', 'result'].forEach(id => $(id).classList.add('hidden'));
+  $('hud').style.display = 'flex';
+  $('go').disabled = false; $('go').textContent = 'START';
+}
+function stopAudio() { if (src) { try { src.stop(); } catch (e) {} src = null; } }
+
+// a touch at normalised x (or a key zone [x0,x1]) hits the closest-in-time ball near that spot
+function hitAt(xn, zone) {
+  if (state !== 'play') return;
+  playSfx();
+  ripples.push({ x: xn, at: performance.now() });
+  const t = songTime(), tolX = (F.r * 1.7) / F.w;
+  let best = null, bestDt = 1e9;
+  for (let i = st.cursor; i < objs.length; i++) {
+    const o = objs[i];
+    if (o.t - t > WIN.good) break;
+    if (o.j) continue;
+    const dt = Math.abs(t - o.t);
+    if (dt > WIN.good) continue;
+    const inX = zone ? (o.x >= zone[0] - tolX * 0.5 && o.x <= zone[1] + tolX * 0.5) : Math.abs(o.x - xn) <= tolX;
+    if (inX && dt < bestDt) { best = o; bestDt = dt; }
+  }
+  if (!best) return;
+  const k = bestDt <= WIN.perfect ? 'perfect' : bestDt <= WIN.great ? 'great' : 'good';
+  best.j = k; best.hitAt = performance.now();
+  st[k]++; st.combo++; st.max = Math.max(st.max, st.combo);
+  st.score += PTS[k] + Math.min(st.combo, 100); comboPop = performance.now();
+  pops.push({ x: best.x, k, at: performance.now(), part: best.part });
+  shots.push({ o: best, at: performance.now() });        // the ball flies back up
+}
+function sweepMisses(t) {
+  while (st.cursor < objs.length && (objs[st.cursor].j || t - objs[st.cursor].t > WIN.good)) {
+    const o = objs[st.cursor];
+    if (!o.j) { o.j = 'miss'; st.miss++; st.combo = 0; pops.push({ x: o.x, k: 'miss', at: performance.now() }); }
+    st.cursor++;
+  }
+}
+function finish() {
+  state = 'result'; stopAudio(); $('hud').style.display = 'none';
+  const total = objs.length || 1;
+  const acc = (st.perfect + st.great * 0.7 + st.good * 0.4) / total * 100;
+  $('resTitle').textContent = chart.title + ' / ' + set.diff.toUpperCase();
+  $('rank').textContent = acc >= 95 ? 'S' : acc >= 85 ? 'A' : acc >= 70 ? 'B' : acc >= 50 ? 'C' : 'D';
+  $('res').innerHTML = [['SCORE', st.score], ['MAX COMBO', st.max], ['精度', acc.toFixed(1) + '%'],
+    ['PERFECT', st.perfect], ['GREAT', st.great], ['GOOD', st.good], ['MISS', st.miss]]
+    .map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('');
+  $('result').classList.remove('hidden');
+}
+function quit() { stopAudio(); state = 'menu'; $('hud').style.display = 'none'; $('menu').classList.remove('hidden'); }
+$('go').addEventListener('click', () => { unlockAudio(); start().catch(e => { console.error(e); $('go').textContent = '再生できませんでした'; }); });
+$('again').onclick = () => { $('result').classList.add('hidden'); $('menu').classList.remove('hidden'); state = 'menu'; };
+$('quit').onclick = quit;
+
+// ---------- input ----------
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (e.clientY < F.top + (F.line - F.top) * 0.45) return;      // ignore taps in the upper half of the field
+  const xn = (e.clientX - F.x) / F.w;
+  window.__lastTapX = xn;
+  hitAt(xn, null);
+}, { passive: false });
+addEventListener('keydown', e => {
+  if (e.repeat) return;
+  const i = KEYS.indexOf(e.key.toLowerCase());
+  if (i >= 0) { e.preventDefault(); hitAt((i + 0.5) / 5, [i / 5, (i + 1) / 5]); }
+  else if (e.key === 'Escape' && state === 'play') quit();
+});
+
+// ---------- render ----------
+function hexA(hex, a) { const n = parseInt(hex.replace('#', ''), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; }
+function ballPos(o, t) {                               // position of an incoming ball at song time t
+  const T = travel(), p = (t - (o.t - T)) / T;
+  const u = o.u0 + (o.u1 - o.u0) * p;
+  return { x: fold(u), y: F.top + (F.line - F.top) * p, p, u };
+}
+function drawBall(px, py, rad, col, alpha, ring) {
+  g.globalAlpha = alpha;
+  const grd = g.createRadialGradient(px - rad * 0.3, py - rad * 0.35, rad * 0.1, px, py, rad);
+  grd.addColorStop(0, '#ffffff'); grd.addColorStop(0.35, col); grd.addColorStop(1, hexA(col, 0.55));
+  g.fillStyle = grd; g.beginPath(); g.arc(px, py, rad, 0, Math.PI * 2); g.fill();
+  if (ring) { g.strokeStyle = hexA('#ffffff', 0.55); g.lineWidth = 1.5; g.beginPath(); g.arc(px, py, rad * 1.28, 0, Math.PI * 2); g.stroke(); }
+  g.globalAlpha = 1;
+}
+let lastT = -99;
+function draw() {
+  const now = performance.now();
+  const t = state === 'play' ? songTime() : -1;
+  g.fillStyle = '#07080c'; g.fillRect(0, 0, W, H);
+
+  // field
+  const fg = g.createLinearGradient(0, F.top, 0, F.line);
+  fg.addColorStop(0, '#0d0f18'); fg.addColorStop(1, '#121527');
+  g.fillStyle = fg; g.fillRect(F.x, F.top, F.w, F.line - F.top);
+  // faint diagonal grid to make bounce angles readable
+  g.save(); g.beginPath(); g.rect(F.x, F.top, F.w, F.line - F.top); g.clip();
+  g.strokeStyle = 'rgba(124,108,255,.05)'; g.lineWidth = 1;
+  for (let k = -12; k < 12; k++) { const x0 = F.x + k * F.w / 4; g.beginPath(); g.moveTo(x0, F.top); g.lineTo(x0 + F.w, F.line); g.moveTo(x0 + F.w, F.top); g.lineTo(x0, F.line); g.stroke(); }
+  g.restore();
+  // walls
+  g.fillStyle = 'rgba(238,241,246,.16)'; g.fillRect(F.x - 2, F.top, 2, F.line - F.top); g.fillRect(F.x + F.w, F.top, 2, F.line - F.top);
+  // opponent line
+  g.fillStyle = 'rgba(124,108,255,.5)'; g.fillRect(F.x, F.top - 1, F.w, 2);
+
+  if (state === 'play') {
+    const T = travel();
+    // wall flashes for bounces that happened since the last frame
+    for (let i = st.cursor; i < objs.length; i++) {
+      const o = objs[i]; if (o.t - T > t) break; if (o.j) continue;
+      const a = ballPos(o, lastT), b = ballPos(o, t);
+      if (a.p < 0 || b.p > 1.1) continue;
+      if (Math.floor(a.u) !== Math.floor(b.u)) {
+        const k = Math.max(Math.floor(a.u), Math.floor(b.u)), side = fold(k) < 0.5 ? 0 : 1;
+        wallFlash.push({ side, y: b.y, at: now, part: o.part });
+      }
+    }
+    // incoming balls (draw far ones first)
+    for (let i = Math.min(objs.length - 1, st.cursor + 160); i >= Math.max(0, st.cursor - 6); i--) {
+      const o = objs[i]; if (o.j && o.j !== 'miss') continue;
+      const pos = ballPos(o, t); if (pos.p < 0 || pos.p > 1.25) continue;
+      const rad = F.r * PART_SIZE[o.part] * (0.75 + 0.25 * Math.min(1, pos.p));
+      const fadeIn = Math.min(1, pos.p * 6), fadeOut = pos.p > 1 ? Math.max(0, 1 - (pos.p - 1) * 4) : 1;
+      drawBall(fx(pos.x), pos.y, rad, o.j === 'miss' ? '#5c6070' : PART_COLORS[o.part], fadeIn * fadeOut, pos.p > 0.82 && !o.j);
+      // landing marker on the judge line
+      if (!o.j && pos.p > 0.55 && pos.p <= 1) {
+        const a = (pos.p - 0.55) / 0.45;
+        g.strokeStyle = hexA(PART_COLORS[o.part], 0.25 + 0.5 * a); g.lineWidth = 2;
+        g.beginPath(); g.arc(fx(o.x), F.line, F.r * PART_SIZE[o.part] * (1.9 - 0.9 * a), Math.PI, 2 * Math.PI); g.stroke();
+      }
+    }
+    // returned shots fly back up to the opponent
+    for (let i = shots.length - 1; i >= 0; i--) {
+      const s = shots[i], q = (now - s.at) / 420;
+      if (q >= 1) { shots.splice(i, 1); continue; }
+      const o = s.o, u = o.u1 + (o.u1 - o.u0) * q * 0.9;
+      const y = F.line - (F.line - F.top) * q;
+      drawBall(fx(fold(u)), y, F.r * PART_SIZE[o.part] * (1 - q * 0.4), PART_COLORS[o.part], 1 - q * 0.6, false);
+      if (q > 0.85) { g.fillStyle = hexA(PART_COLORS[o.part], (q - 0.85) * 4); g.fillRect(F.x, F.top - 3, F.w, 6); }
+    }
+    sweepMisses(t);
+    if (t > st.end) finish();
+    $('score').textContent = st.score;
+  }
+  lastT = t;
+
+  for (let i = wallFlash.length - 1; i >= 0; i--) {
+    const f = wallFlash[i], a = 1 - (now - f.at) / 260;
+    if (a <= 0) { wallFlash.splice(i, 1); continue; }
+    const x = f.side ? F.x + F.w : F.x;
+    const grd = g.createRadialGradient(x, f.y, 0, x, f.y, F.r * 2.4);
+    grd.addColorStop(0, hexA(PART_COLORS[f.part], 0.7 * a)); grd.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grd; g.fillRect(x - F.r * 2.4, f.y - F.r * 2.4, F.r * 4.8, F.r * 4.8);
+  }
+
+  // judge line + touch zone
+  const lg = g.createLinearGradient(F.x, 0, F.x + F.w, 0);
+  lg.addColorStop(0, 'rgba(124,108,255,.35)'); lg.addColorStop(0.5, 'rgba(238,241,246,.95)'); lg.addColorStop(1, 'rgba(124,108,255,.35)');
+  g.fillStyle = lg; g.fillRect(F.x, F.line - 1.5, F.w, 3);
+  g.fillStyle = 'rgba(124,108,255,.06)'; g.fillRect(F.x, F.line + 2, F.w, H - F.line - 2);
+
+  // combo
+  if (state === 'play' && st.combo >= 5) {
+    const pop = Math.max(0, 1 - (now - comboPop) / 140);
+    g.textAlign = 'center'; g.fillStyle = `rgba(238,241,246,${0.16 + pop * 0.25})`;
+    g.font = `400 ${Math.round(F.w * 0.2 * (1 + pop * 0.1))}px "Dela Gothic One", sans-serif`;
+    g.fillText(st.combo, W / 2, F.top + (F.line - F.top) * 0.42);
+    g.font = '700 10px "JetBrains Mono", monospace'; g.fillStyle = 'rgba(238,241,246,.35)';
+    g.fillText('COMBO', W / 2, F.top + (F.line - F.top) * 0.42 + 18);
+  }
+  // touch ripples & judgement pops
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i], a = 1 - (now - r.at) / 300;
+    if (a <= 0) { ripples.splice(i, 1); continue; }
+    g.strokeStyle = `rgba(238,241,246,${0.45 * a})`; g.lineWidth = 2;
+    g.beginPath(); g.arc(fx(r.x), F.line, F.r * (1 + (1 - a) * 1.2), 0, Math.PI * 2); g.stroke();
+  }
+  for (let i = pops.length - 1; i >= 0; i--) {
+    const p = pops[i], age = (now - p.at) / 450;
+    if (age > 1) { pops.splice(i, 1); continue; }
+    const col = { perfect: '#ffe46b', great: '#7dffc0', good: '#86c8ff', miss: '#ff6b7d' }[p.k];
+    if (p.k !== 'miss') {
+      g.globalAlpha = (1 - age) * 0.9; g.strokeStyle = col; g.lineWidth = 3;
+      g.beginPath(); g.arc(fx(p.x), F.line, F.r * (1.2 + age * 1.6), 0, Math.PI * 2); g.stroke();
+    }
+    g.globalAlpha = 1 - age; g.fillStyle = col; g.font = '700 12px "JetBrains Mono", monospace'; g.textAlign = 'center';
+    g.fillText(p.k.toUpperCase(), fx(p.x), F.line - F.r * 2 - age * 14);
+    g.globalAlpha = 1;
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+window.__sb = { songTime: () => songTime(), get st() { return st; }, get state() { return state; }, get objs() { return objs; }, get F() { return F; }, hitAt };
+})();
+</script>
+</body>
+</html>

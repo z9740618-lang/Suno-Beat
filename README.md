@@ -21,7 +21,8 @@ Sunoで作った曲を、パート分離して自動で譜面にし、ブラウ�
 
 | 場所 | 中身 |
 |---|---|
-| `web/` | ゲーム本体（今は1曲分：index.html, chart.json, mix.mp3） |
+| `web2/` | **新しい版（開発の本線）**：縦持ち。壁で跳ね返りながら落ちてくる球を、下のラインの同じ位置でタッチして打ち返す |
+| `web/` | 最初の版（横持ち・奥から迫る4レーン）。参考として残している |
 | `songs/<slug>/` | 曲ごとの譜面と音源 |
 | `pipeline/` | 分離と譜面生成のスクリプト |
 | `tests/play_test.js` | Playwrightで縦持ち・横持ち・PCを自動プレイして確認するテスト |
@@ -33,6 +34,14 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 pip install -r pipeline/requirements.txt
 pipeline/build_song.sh path/to/song.wav my-song "My Song"
 ```
+
+## 新しい版（web2）の仕組み
+
+- 譜面（タイミング＋パート）から、球ごとに着地位置と跳ね返り回数を決めて軌道を計算する（同じ譜面なら毎回同じ動き）
+- 間隔が短い連続ノーツは近い位置に着地させ、同時ノーツは十分離す
+- 判定はタイミングと位置の両方。打った球は相手側へ飛んでいく
+- 色と大きさはパートごと（キック／スネア／ハイハット／ギター）
+- 既存の作品の名前・ロゴ・見た目・効果音は使わない方針（遊び方のオマージュに留める）
 
 ## 次にやること
 
