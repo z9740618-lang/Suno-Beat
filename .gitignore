@@ -1,0 +1,6 @@
+# large intermediates (WAV, separated stems) are rebuilt by the pipeline
+work/
+*.wav
+node_modules/
+__pycache__/
+.DS_Store

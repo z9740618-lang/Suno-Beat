@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>STEM BEAT — Too Loud to Die</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#08070a; --panel:#16141b; --ink:#f3efe6; --dim:#8d8796; --line:#2a2631;
+    --kick:#ff4d4d; --snare:#ffad1f; --hat:#a6e22e; --guitar:#3fa7ff; --accent:#ff2e63;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+    font-family:"JetBrains Mono",ui-monospace,monospace;-webkit-user-select:none;user-select:none;
+    -webkit-tap-highlight-color:transparent;touch-action:none;overscroll-behavior:none;-webkit-touch-callout:none}
+  #stage{position:fixed;left:0;top:0;transform-origin:0 0;overflow:hidden}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .hud{position:absolute;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:flex-start;
+    padding:10px 16px;pointer-events:none;font-size:11px;color:var(--dim);letter-spacing:.08em}
+  .hud b{color:var(--ink);font-size:20px;display:block;letter-spacing:0}
+  #quit{pointer-events:auto;background:rgba(0,0,0,.4);border:1px solid var(--line);color:var(--dim);
+    font:inherit;font-size:12px;padding:6px 12px;border-radius:4px;cursor:pointer}
+  .screen{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    padding:16px 20px;background:rgba(8,7,10,.93);z-index:5;overflow:auto}
+  .screen.hidden{display:none}
+  .wrap{display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;max-width:820px;width:100%}
+  .col{display:contents}
+  h1{font-family:"Dela Gothic One",sans-serif;font-weight:400;font-size:44px;line-height:1;letter-spacing:.02em}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--dim);font-size:12px;line-height:1.7}
+  .song{font-family:"Dela Gothic One",sans-serif;font-size:18px}
+  .diffs{display:flex;gap:8px}
+  .diff{font:inherit;font-weight:700;font-size:13px;padding:10px 14px;border-radius:6px;cursor:pointer;
+    background:var(--panel);color:var(--ink);border:2px solid var(--line);min-width:84px}
+  .diff small{display:block;font-weight:500;color:var(--dim);font-size:10px;margin-top:3px}
+  .diff.on{border-color:var(--accent);background:#2a1119}
+  .row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);width:100%;max-width:320px}
+  .row label{flex:1;text-align:left}
+  .row button{font:inherit;font-weight:700;width:34px;height:30px;border-radius:5px;border:1px solid var(--line);
+    background:var(--panel);color:var(--ink);cursor:pointer;font-size:16px;line-height:1}
+  .row output{width:64px;text-align:center;color:var(--ink);font-weight:700}
+  .go{font-family:"Dela Gothic One",sans-serif;font-size:22px;padding:12px 44px;border:none;border-radius:8px;
+    background:var(--accent);color:#fff;cursor:pointer;letter-spacing:.06em}
+  .go:disabled{opacity:.4;cursor:wait}
+  .keys{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;width:100%;max-width:320px;font-size:10px}
+  .keys div{border-radius:4px;padding:5px 0;background:var(--panel);border-top:3px solid}
+  .keys kbd{display:block;font-weight:700;font-size:14px;color:var(--ink)}
+  .note{font-size:10.5px;color:var(--dim);max-width:340px;line-height:1.6}
+  .res{display:grid;grid-template-columns:auto auto;gap:5px 22px;font-size:14px;text-align:left}
+  .res dt{color:var(--dim)} .res dd{text-align:right;font-weight:700}
+  .rank{font-family:"Dela Gothic One",sans-serif;font-size:72px;line-height:1;color:var(--accent)}
+  /* short landscape (phones sideways, real or virtual): two columns */
+  .compact .wrap{display:grid;grid-template-columns:1fr 1fr;gap:10px 28px;align-items:center;text-align:left}
+  .compact .col{display:flex;flex-direction:column;gap:9px}
+  .compact .col.a{align-items:flex-start} .compact .col.b{align-items:center}
+  .compact h1{font-size:34px}
+  .compact .row{max-width:300px}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div class="hud" id="hud" style="display:none">
+    <div>SCORE<b id="score">0</b></div>
+    <div><button id="quit">やめる</button></div>
+  </div>
+
+  <div class="screen" id="menu">
+    <div class="wrap">
+      <div class="col a">
+        <h1>STEM<span>.</span>BEAT</h1>
+        <div class="sub">Suno → パート分離 → 自動譜面</div>
+        <div class="song" id="songTitle">—</div>
+        <div class="keys" id="keys"></div>
+      </div>
+      <div class="col b">
+        <div class="diffs" id="diffs"></div>
+        <div class="row"><label>ハイスピード</label><button data-s="speed" data-d="-1">−</button><output id="speedV"></output><button data-s="speed" data-d="1">＋</button></div>
+        <div class="row"><label>判定ずらし</label><button data-s="offset" data-d="-1">−</button><output id="offsetV"></output><button data-s="offset" data-d="1">＋</button></div>
+        <div class="row"><label>タップ音</label><button data-s="sfx" data-d="-1">−</button><output id="sfxV"></output><button data-s="sfx" data-d="1">＋</button></div>
+        <button class="go" id="go" disabled>LOADING…</button>
+        <div class="note">スマホは横持ち（画面の上側を左へ倒す）・両手の親指で。PCはキーボード。音と判定がずれる時は「判定ずらし」（遅れて聞こえるなら＋）。iPhoneはマナーモードだと無音のことがあります。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="screen hidden" id="result">
+    <div class="wrap">
+      <div class="col a"><div class="song" id="resTitle"></div><div class="rank" id="rank">A</div></div>
+      <div class="col b"><dl class="res" id="res"></dl><button class="go" id="again">もう一回</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const LANE_COLORS = ['--kick', '--snare', '--hat', '--guitar'].map(css);
+const LANE_NAMES = ['KICK', 'SNARE', 'HAT', 'GUITAR'];
+const KEYS = ['d', 'f', 'j', 'k'];
+const NL = 4;
+const WIN = { perfect: 0.045, great: 0.090, good: 0.135 };
+const PTS = { perfect: 300, great: 200, good: 100 };
+const LEAD_IN = 2.4;
+
+const $ = id => document.getElementById(id);
+const stage = $('stage'), cv = $('cv'), g = cv.getContext('2d');
+const isTouch = matchMedia('(pointer:coarse)').matches || 'ontouchstart' in window;
+let chart, ctx, rawMix, mixBuf, sfxBuf, sfxGain, src = null;
+let set = { diff: 'normal', speed: 1.2, offset: 0, sfx: 5 };
+let state = 'menu', startAt = 0, notes = [], lanes = [], st = {};
+const press = new Array(NL).fill(0), flashes = [];
+let comboPop = 0;
+
+// ---------- settings ----------
+try { Object.assign(set, JSON.parse(localStorage.getItem('stembeat4') || '{}')); } catch (e) {}
+const save = () => { try { localStorage.setItem('stembeat4', JSON.stringify(set)); } catch (e) {} };
+const STEP = { speed: [0.1, 0.6, 2.5], offset: [5, -150, 150], sfx: [1, 0, 10] };
+function showVals() {
+  $('speedV').textContent = set.speed.toFixed(1) + 'x';
+  $('offsetV').textContent = (set.offset > 0 ? '+' : '') + set.offset + 'ms';
+  $('sfxV').textContent = set.sfx === 0 ? 'OFF' : set.sfx * 10 + '%';
+}
+document.querySelectorAll('.row button').forEach(b => b.addEventListener('click', () => {
+  const k = b.dataset.s, [step, lo, hi] = STEP[k];
+  set[k] = Math.round(Math.min(hi, Math.max(lo, set[k] + step * +b.dataset.d)) * 100) / 100;
+  showVals(); save();
+  if (k === 'sfx' && ctx) { setSfxGain(); playSfx(); }
+}));
+showVals();
+$('keys').innerHTML = LANE_NAMES.map((n, i) => `<div style="border-color:${LANE_COLORS[i]}"><kbd>${KEYS[i].toUpperCase()}</kbd>${n}</div>`).join('');
+
+// ---------- layout: phones held sideways always get a landscape stage ----------
+// If the browser itself stays portrait (e.g. inside an app that doesn't rotate),
+// the stage is rotated 90° in CSS so the game is landscape anyway.
+let W = 0, H = 0, virt = false;
+function layout() {
+  const iw = innerWidth, ih = innerHeight;
+  virt = isTouch && ih > iw;
+  W = virt ? ih : iw; H = virt ? iw : ih;
+  stage.style.width = W + 'px'; stage.style.height = H + 'px';
+  stage.style.transform = virt ? `translate(${iw}px,0) rotate(90deg)` : 'none';
+  document.body.classList.toggle('compact', W > H && H <= 520);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', layout);
+addEventListener('orientationchange', () => setTimeout(layout, 250));
+layout();
+// screen point -> stage-local x
+const localX = (cx, cy) => virt ? cy : cx;
+
+// ---------- load ----------
+async function load() {
+  chart = await (await fetch('chart.json')).json();
+  $('songTitle').textContent = chart.title + ' · ' + chart.bpm + ' BPM';
+  if (!chart.charts[set.diff]) set.diff = 'normal';
+  $('diffs').innerHTML = Object.keys(chart.charts).map(k =>
+    `<button class="diff${k === set.diff ? ' on' : ''}" data-k="${k}">${k.toUpperCase()}<small>${chart.charts[k].length} notes</small></button>`).join('');
+  $('diffs').onclick = e => { const b = e.target.closest('.diff'); if (!b) return; set.diff = b.dataset.k; save();
+    [...$('diffs').children].forEach(c => c.classList.toggle('on', c === b)); };
+  rawMix = await (await fetch('mix.mp3')).arrayBuffer();
+  $('go').disabled = false; $('go').textContent = 'START';
+}
+load().catch(err => { $('go').textContent = '読み込み失敗'; console.error(err); });
+
+// iOS only lets audio start inside the tap itself, so this runs synchronously in the click handler.
+function unlockAudio() {
+  if (!ctx) {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    sfxGain = ctx.createGain(); sfxGain.connect(ctx.destination); setSfxGain();
+    sfxBuf = makeSfx();
+  }
+  if (ctx.state !== 'running') ctx.resume();
+  const s = ctx.createBufferSource(); s.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); s.connect(ctx.destination); s.start(0);
+}
+function setSfxGain() { if (sfxGain) sfxGain.gain.value = set.sfx / 10 * 0.9; }
+function makeSfx() {   // short bright "tick": decaying 2.2kHz ping + filtered noise click
+  const sr = ctx.sampleRate, n = Math.floor(sr * 0.05), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0);
+  let lp = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / sr, env = Math.exp(-t * 90), nenv = Math.exp(-t * 400);
+    const noise = Math.random() * 2 - 1; lp += 0.35 * (noise - lp);
+    d[i] = 0.55 * Math.sin(2 * Math.PI * 2200 * t) * env + 0.6 * (noise - lp) * nenv;
+  }
+  return b;
+}
+function playSfx() {
+  if (!ctx || set.sfx === 0) return;
+  const s = ctx.createBufferSource(); s.buffer = sfxBuf; s.connect(sfxGain); s.start();
+}
+function songTime() {
+  if (!ctx) return -LEAD_IN;
+  let t;
+  if (ctx.getOutputTimestamp) {
+    const ts = ctx.getOutputTimestamp();
+    t = ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
+    if (!isFinite(t) || ts.contextTime === 0) t = ctx.currentTime - (ctx.outputLatency || ctx.baseLatency || 0);
+  } else t = ctx.currentTime - (ctx.baseLatency || 0);
+  return t - startAt - set.offset / 1000;
+}
+
+// ---------- game flow ----------
+async function start() {
+  $('go').disabled = true; $('go').textContent = '準備中…';
+  if (!mixBuf) mixBuf = await ctx.decodeAudioData(rawMix.slice(0));
+  if (ctx.state !== 'running') await ctx.resume();
+  notes = chart.charts[set.diff].map(n => ({ t: n.t, lane: n.lane, j: null }));
+  lanes = Array.from({ length: NL }, (_, l) => notes.filter(n => n.lane === l));
+  st = { score: 0, combo: 0, max: 0, perfect: 0, great: 0, good: 0, miss: 0, cursor: new Array(NL).fill(0), end: chart.duration + 1.0 };
+  startAt = ctx.currentTime + LEAD_IN;
+  src = ctx.createBufferSource(); src.buffer = mixBuf; src.connect(ctx.destination); src.start(startAt);
+  state = 'play';
+  ['menu', 'result'].forEach(id => $(id).classList.add('hidden'));
+  $('hud').style.display = 'flex';
+  $('go').disabled = false; $('go').textContent = 'START';
+}
+function stopAudio() { if (src) { try { src.stop(); } catch (e) {} src = null; } }
+function judge(lane) {
+  press[lane] = performance.now();
+  if (state !== 'play') return;
+  playSfx();
+  const t = songTime(), L = lanes[lane];
+  for (let i = st.cursor[lane]; i < L.length; i++) {
+    const n = L[i]; if (n.j) continue;
+    const dt = t - n.t;
+    if (dt < -WIN.good) break;
+    if (Math.abs(dt) <= WIN.good) {
+      const a = Math.abs(dt), k = a <= WIN.perfect ? 'perfect' : a <= WIN.great ? 'great' : 'good';
+      n.j = k; st[k]++; st.combo++; st.max = Math.max(st.max, st.combo);
+      st.score += PTS[k] + Math.min(st.combo, 100); comboPop = performance.now();
+      flashes.push({ lane, k, at: performance.now() });
+      return;
+    }
+  }
+}
+function sweepMisses(t) {
+  for (let l = 0; l < NL; l++) {
+    const L = lanes[l];
+    while (st.cursor[l] < L.length && (L[st.cursor[l]].j || t - L[st.cursor[l]].t > WIN.good)) {
+      const n = L[st.cursor[l]];
+      if (!n.j) { n.j = 'miss'; st.miss++; st.combo = 0; flashes.push({ lane: l, k: 'miss', at: performance.now() }); }
+      st.cursor[l]++;
+    }
+  }
+}
+function finish() {
+  state = 'result'; stopAudio(); $('hud').style.display = 'none';
+  const total = notes.length || 1;
+  const acc = (st.perfect + st.great * 0.7 + st.good * 0.4) / total * 100;
+  $('resTitle').textContent = chart.title + ' / ' + set.diff.toUpperCase();
+  $('rank').textContent = acc >= 95 ? 'S' : acc >= 85 ? 'A' : acc >= 70 ? 'B' : acc >= 50 ? 'C' : 'D';
+  $('res').innerHTML = [['SCORE', st.score], ['MAX COMBO', st.max], ['精度', acc.toFixed(1) + '%'],
+    ['PERFECT', st.perfect], ['GREAT', st.great], ['GOOD', st.good], ['MISS', st.miss]]
+    .map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('');
+  $('result').classList.remove('hidden');
+}
+function quit() { stopAudio(); state = 'menu'; $('hud').style.display = 'none'; $('menu').classList.remove('hidden'); }
+
+$('go').addEventListener('click', () => { unlockAudio(); start().catch(e => { console.error(e); $('go').textContent = '再生できませんでした'; }); });
+$('again').onclick = () => { $('result').classList.add('hidden'); $('menu').classList.remove('hidden'); state = 'menu'; };
+$('quit').onclick = quit;
+
+// ---------- input ----------
+addEventListener('keydown', e => {
+  if (e.repeat) return;
+  const i = KEYS.indexOf(e.key.toLowerCase());
+  if (i >= 0) { e.preventDefault(); judge(i); }
+  else if (e.key === 'Escape' && state === 'play') quit();
+});
+// touch: stage width split into 4 thumb columns, any height
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const lane = Math.max(0, Math.min(NL - 1, Math.floor(localX(e.clientX, e.clientY) / W * NL)));
+  window.__lastLane = lane;
+  judge(lane);
+}, { passive: false });
+
+// ---------- 3D highway ----------
+function geom() {
+  const hitY = H * 0.80, horizon = H * 0.06;
+  const halfW = Math.min(W * 0.36, H * 0.95);
+  return { cx: W / 2, hitY, horizon, halfW, k: 0.35 };
+}
+function proj(G, d, xn) {
+  const s = 1 / (1 + Math.max(d, -1.5) * G.k);
+  return { x: G.cx + xn * G.halfW * s, y: G.horizon + (G.hitY - G.horizon) * s, s };
+}
+function quad(G, d0, d1, x0, x1) {
+  const a = proj(G, d0, x0), b = proj(G, d0, x1), c = proj(G, d1, x1), e = proj(G, d1, x0);
+  g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.lineTo(c.x, c.y); g.lineTo(e.x, e.y); g.closePath();
+  return { near: a, far: e };
+}
+const laneX = l => [-1 + (2 * l) / NL, -1 + (2 * (l + 1)) / NL];
+function hexA(hex, a) { const n = parseInt(hex.replace('#', ''), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; }
+// thin horizontal bar at depth d spanning a lane
+function bar(G, d, x0, x1, hpx) {
+  const a = proj(G, d, x0), b = proj(G, d, x1), h = Math.max(2, hpx * a.s);
+  return { x: a.x, y: a.y - h / 2, w: b.x - a.x, h, s: a.s };
+}
+
+const D_FAR = 22;
+function draw() {
+  const G = geom(), now = performance.now();
+  const t = state === 'play' ? songTime() : -1;
+  const depth = dt => dt * set.speed * 4.3;
+
+  const bg = g.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#120b18'); bg.addColorStop(0.5, '#08070a'); bg.addColorStop(1, '#08070a');
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+
+  quad(G, -1.2, D_FAR, -1.04, 1.04); g.fillStyle = '#0f0d13'; g.fill();
+  for (let l = 0; l < NL; l++) {
+    const [x0, x1] = laneX(l), glow = Math.max(0, 1 - (now - press[l]) / 200);
+    const r = quad(G, -1.2, D_FAR, x0, x1);
+    const grd = g.createLinearGradient(0, r.far.y, 0, r.near.y);
+    grd.addColorStop(0, 'rgba(0,0,0,0)'); grd.addColorStop(1, hexA(LANE_COLORS[l], 0.05 + glow * 0.3));
+    g.fillStyle = grd; g.fill();
+  }
+  for (let i = 0; i <= NL; i++) {
+    const xn = -1 + (2 * i) / NL, a = proj(G, -1.2, xn), b = proj(G, D_FAR, xn);
+    g.strokeStyle = i === 0 || i === NL ? 'rgba(243,239,230,.35)' : i === 3 ? 'rgba(243,239,230,.26)' : 'rgba(243,239,230,.1)';
+    g.lineWidth = i === 3 ? 2 : 1; g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+  }
+  // combo, painted on the road behind the notes
+  if (state === 'play' && st.combo >= 5) {
+    const pop = Math.max(0, 1 - (now - comboPop) / 140), c = proj(G, 12, 0);
+    g.textAlign = 'center'; g.fillStyle = `rgba(243,239,230,${0.22 + pop * 0.25})`;
+    g.font = `400 ${Math.round(H * 0.11 * (1 + pop * 0.12))}px "Dela Gothic One", sans-serif`;
+    g.fillText(st.combo, c.x, c.y);
+    g.font = '700 11px "JetBrains Mono", monospace'; g.fillStyle = 'rgba(243,239,230,.4)';
+    g.fillText('COMBO', c.x, c.y + 16);
+  }
+
+  if (state === 'play') {
+    for (const b of chart.bars) {
+      const d = depth(b - t); if (d < 0) continue; if (d > D_FAR) break;
+      const p0 = proj(G, d, -1), p1 = proj(G, d, 1);
+      g.strokeStyle = `rgba(243,239,230,${0.2 * p0.s + 0.04})`; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(p0.x, p0.y); g.lineTo(p1.x, p1.y); g.stroke();
+    }
+    // notes: thin wide bars, far to near
+    for (let l = 0; l < NL; l++) {
+      const L = lanes[l], [x0, x1] = laneX(l), pad = 0.04;
+      let end = st.cursor[l];
+      while (end < L.length && depth(L[end].t - t) < D_FAR) end++;
+      for (let i = end - 1; i >= Math.max(0, st.cursor[l] - 3); i--) {
+        const n = L[i];
+        if (n.j && n.j !== 'miss') continue;
+        const d = depth(n.t - t);
+        if (d < -1.2) continue;
+        const r = bar(G, d, x0 + pad, x1 - pad, 9);
+        const fog = Math.min(1, r.s * 2.2);
+        if (n.j === 'miss') { g.fillStyle = 'rgba(110,110,120,.35)'; g.fillRect(r.x, r.y, r.w, r.h); continue; }
+        g.shadowColor = LANE_COLORS[l]; g.shadowBlur = 10 * r.s;
+        g.fillStyle = hexA(LANE_COLORS[l], 0.25 + 0.75 * fog); g.fillRect(r.x, r.y, r.w, r.h);
+        g.shadowBlur = 0;
+        g.fillStyle = `rgba(255,255,255,${0.7 * fog})`; g.fillRect(r.x + r.w * 0.06, r.y + r.h * 0.38, r.w * 0.88, Math.max(1, r.h * 0.24));
+      }
+    }
+    sweepMisses(t);
+    if (t > st.end) finish();
+    $('score').textContent = st.score;
+  }
+
+  // judgement line: thin bars matching the note shape
+  for (let l = 0; l < NL; l++) {
+    const [x0, x1] = laneX(l), glow = Math.max(0, 1 - (now - press[l]) / 160);
+    const r = bar(G, 0, x0 + 0.02, x1 - 0.02, 12);
+    g.fillStyle = hexA(LANE_COLORS[l], 0.12 + glow * 0.5); g.fillRect(r.x, r.y - 8, r.w, r.h + 16);
+    g.fillStyle = hexA(LANE_COLORS[l], 0.85); g.fillRect(r.x, r.y + r.h / 2 - 1.5, r.w, 3);
+  }
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const f = flashes[i], age = (now - f.at) / 420;
+    if (age > 1) { flashes.splice(i, 1); continue; }
+    const [x0, x1] = laneX(f.lane), c = proj(G, 0, (x0 + x1) / 2);
+    const col = { perfect: '#ffe14d', great: '#7dffb0', good: '#7ec8ff', miss: '#ff5d5d' }[f.k];
+    if (f.k !== 'miss') {
+      g.globalAlpha = (1 - age) * 0.8; g.strokeStyle = col; g.lineWidth = 3;
+      g.beginPath(); g.ellipse(c.x, c.y, G.halfW / NL * (0.6 + age * 0.9), G.halfW / NL * (0.14 + age * 0.25), 0, 0, Math.PI * 2); g.stroke();
+    }
+    g.globalAlpha = 1 - age; g.fillStyle = col; g.font = '700 13px "JetBrains Mono", monospace'; g.textAlign = 'center';
+    g.fillText(f.k.toUpperCase(), c.x, c.y - 26 - age * 16);
+    g.globalAlpha = 1;
+  }
+  if (isTouch) {
+    for (let l = 0; l < NL; l++) {
+      const glow = Math.max(0, 1 - (now - press[l]) / 160);
+      g.fillStyle = hexA(LANE_COLORS[l], 0.07 + glow * 0.25);
+      g.fillRect(l * W / NL + 3, H * 0.90, W / NL - 6, H * 0.1 - 4);
+      g.fillStyle = 'rgba(243,239,230,.5)'; g.font = '700 10px "JetBrains Mono", monospace'; g.textAlign = 'center';
+      g.fillText(LANE_NAMES[l], l * W / NL + W / NL / 2, H * 0.955);
+    }
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+window.__stembeat = { songTime: () => songTime(), get st() { return st; }, get state() { return state; }, judge, get virt() { return virt; } };
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# CPU-only torch keeps the install small:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+demucs
+librosa
+soundfile
+scipy
+numpy
