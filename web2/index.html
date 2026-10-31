@@ -10,7 +10,7 @@
 <style>
   :root{
     --bg:#07080c; --panel:#141620; --ink:#eef1f6; --dim:#848aa0; --line:#262a38;
-    --kick:#ff5470; --snare:#ffb43d; --hat:#6fe3a1; --guitar:#4fb3ff; --accent:#7c6cff;
+    --kick:#ff5470; --snare:#ffb43d; --hat:#6fe3a1; --guitar:#4fb3ff; --vocal:#d38bff; --accent:#7c6cff;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
@@ -89,9 +89,9 @@
 <script>
 (() => {
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-const PART_COLORS = ['--kick', '--snare', '--hat', '--guitar'].map(css);
-const PART_NAMES = ['KICK', 'SNARE', 'HAT', 'GUITAR'];
-const PART_SIZE = [1.15, 1.0, 0.8, 1.05];        // relative ball radius per part
+const PART_COLORS = ['--kick', '--snare', '--hat', '--guitar', '--vocal'].map(css);
+const PART_NAMES = ['KICK', 'SNARE', 'HAT', 'GUITAR', 'VOCAL'];
+const PART_SIZE = [1.08, 1.0, 0.9, 1.04, 1.06];        // relative disc radius per part (kept close: all discs are big)
 const KEYS = ['s', 'd', 'f', 'j', 'k'];
 const WIN = { perfect: 0.045, great: 0.090, good: 0.135 };
 const PTS = { perfect: 300, great: 200, good: 100 };
@@ -123,7 +123,7 @@ document.querySelectorAll('.row button').forEach(b => b.addEventListener('click'
   if (k === 'music' && musicGain) musicGain.gain.value = set.music / 10;
 }));
 showVals();
-$('legend').innerHTML = PART_NAMES.map((n, i) => `<span><i style="background:${PART_COLORS[i]}"></i>${n}</span>`).join('');
+$('legend').innerHTML = [4, 0, 1, 2, 3].map(i => [PART_NAMES[i], i]).map(([n, i]) => `<span><i style="background:${PART_COLORS[i]}"></i>${n}</span>`).join('');
 
 // ---------- layout ----------
 let W = 0, H = 0, F = {};
@@ -134,7 +134,7 @@ function layout() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   const fw = Math.min(W - 12, H * 0.58);            // playfield width (portrait column on PC too)
   // the field continues above the screen: the opponent's end is out of view, so it reads as a long table
-  F = { x: (W - fw) / 2, w: fw, top: -H * 0.38, line: H * 0.84, r: fw * 0.066 };
+  F = { x: (W - fw) / 2, w: fw, top: -H * 0.38, line: H * 0.84, r: fw * 0.1 };
 }
 addEventListener('resize', layout); layout();
 const fx = xn => F.x + xn * F.w;                      // normalised 0..1 -> px
@@ -148,12 +148,14 @@ function buildBalls(notes, diff) {
   const R = rng(diff.length * 7919 + notes.length);
   const sorted = notes.slice().sort((a, b) => a.t - b.t || a.lane - b.lane);
   const out = []; let prevX = 0.5, prevT = -9, prevGroupX = [], chordId = 0;
-  const margin = 0.09;
+  const margin = 0.13;
   for (const n of sorted) {
     const gap = n.t - prevT;
     let x;
     if (gap < 0.012) {                               // chord: keep clear of balls landing at the same moment
-      do { x = margin + R() * (1 - 2 * margin); } while (prevGroupX.some(px => Math.abs(px - x) < 0.28));
+      // put the partner on the far side of the one already placed (no search loop: always terminates)
+      const px = prevGroupX[prevGroupX.length - 1], d = 0.42 + R() * 0.12;
+      x = px < 0.5 ? Math.min(1 - margin, px + d) : Math.max(margin, px - d);
       prevGroupX.push(x);
     } else {
       const reach = Math.min(0.75, Math.max(0.16, gap * 0.9));   // short gaps -> small hand movement
@@ -166,7 +168,15 @@ function buildBalls(notes, diff) {
     const bounces = R() < 0.35 ? 0 : R() < 0.7 ? 1 : 2;
     const dir = R() < 0.5 ? -1 : 1;
     const u1 = x, u0 = x + dir * (bounces + 0.25 + R() * 0.5);
-    if (gap < 0.012 && out.length) { const prev = out[out.length - 1]; prev.chord = prev.chord ?? chordId; out.push({ t: n.t, part: n.lane, x, u0, u1, j: null, hitAt: 0, chord: prev.chord }); if (prev.chord === chordId) chordId++; continue; }
+    if (gap < 0.012 && out.length) {
+      // chord: both discs come down almost straight, side by side, with the same slight drift,
+      // so they never cross in the air (margin > drift, so no wall bounce either)
+      const prev = out[out.length - 1], drift = (dir * 0.07);
+      prev.chord = prev.chord ?? chordId; prev.u0 = prev.x + drift;
+      out.push({ t: n.t, part: n.lane, x, u0: x + drift, u1, j: null, hitAt: 0, chord: prev.chord });
+      if (prev.chord === chordId) chordId++;
+      continue;
+    }
     out.push({ t: n.t, part: n.lane, x, u0, u1, j: null, hitAt: 0 });
   }
   return out;
@@ -246,8 +256,8 @@ function hitAt(xn, zone) {
   if (state !== 'play') return;
   playSfx();
   ripples.push({ x: xn, at: performance.now() });
-  const t = songTime(), tolX = (F.r * 1.7) / F.w;
-  let best = null, bestDt = 1e9;
+  const t = songTime(), tolX = (F.r * 1.5) / F.w;   // hit area = 1.5x disc radius each side
+  let best = null, bestScore = 1e9, bestDt = 0;
   for (let i = st.cursor; i < objs.length; i++) {
     const o = objs[i];
     if (o.t - t > WIN.good) break;
@@ -255,7 +265,8 @@ function hitAt(xn, zone) {
     const dt = Math.abs(t - o.t);
     if (dt > WIN.good) continue;
     const inX = zone ? (o.x >= zone[0] - tolX * 0.5 && o.x <= zone[1] + tolX * 0.5) : Math.abs(o.x - xn) <= tolX;
-    if (inX && dt < bestDt) { best = o; bestDt = dt; }
+    const score = Math.round(dt * 200) + Math.abs(o.x - xn) * 0.01;   // time first (5ms steps), then distance
+    if (inX && score < bestScore) { best = o; bestScore = score; bestDt = dt; }
   }
   if (!best) return;
   const k = bestDt <= WIN.perfect ? 'perfect' : bestDt <= WIN.great ? 'great' : 'good';
@@ -385,11 +396,13 @@ function draw() {
     }
     // returned shots fly back up to the opponent
     for (let i = shots.length - 1; i >= 0; i--) {
-      const s = shots[i], q = (now - s.at) / 600;
+      // a returned disc goes back up at the same speed it came down, so the opponent could read it
+      const s = shots[i], q = (now - s.at) / (travel() * 1000);
       if (q >= 1) { shots.splice(i, 1); continue; }
-      const o = s.o, u = o.u1 + (o.u1 - o.u0) * q * 0.9;
+      const o = s.o, u = o.u1 + (o.u1 - o.u0) * q;
       const y = F.line - (F.line - F.top) * q;
-      drawBall(fx(fold(u)), y, F.r * PART_SIZE[o.part] * (1 - q * 0.4), PART_COLORS[o.part], 1 - q * 0.6, false);
+      if (y < -F.r * 2) continue;
+      drawBall(fx(fold(u)), y, F.r * PART_SIZE[o.part], PART_COLORS[o.part], 0.38, false);
     }
     sweepMisses(t);
     if (t > st.end) finish();

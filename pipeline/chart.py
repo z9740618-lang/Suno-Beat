@@ -1,15 +1,18 @@
 """Auto-chart generator: stems + beat grid -> lane notes for 3 difficulties.
 
-usage: python3 pipeline/chart.py <stems_dir> <title> <out_chart.json>
+usage: python3 pipeline/chart.py <stems_dir> <title> <out_chart.json> [disc|lanes]
+  disc  (default): sparse charts for the portrait disc game (web2) - big discs, wide hit areas
+  lanes          : denser 4-lane charts for the first prototype (web)
   stems_dir: Demucs htdemucs (4-stem) output folder containing drums/bass/other/vocals.wav
 """
 import librosa, numpy as np, json, sys, scipy.signal as sg
 STEMS_DIR, TITLE, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
+PROFILE = sys.argv[4] if len(sys.argv) > 4 else 'disc'
 
 SR = 22050
 HOP = 256
 D = STEMS_DIR.rstrip('/') + '/'
-LANES = ['kick', 'snare', 'hat', 'guitar']
+LANES = ['kick', 'snare', 'hat', 'guitar'] + (['vocal'] if PROFILE == 'disc' else [])
 
 def load(name):
     return librosa.load(D + name + '.wav', sr=SR, mono=True)[0]
@@ -105,6 +108,17 @@ for gi, (r, s_) in ratios.items():
     cands['kick' if r > SPLIT else 'snare'][gi] = s_
 cands['hat'] = peaks_to_grid(env['hat'], .25)
 cands['guitar'] = peaks_to_grid(env['guitar'], .2)
+# ---------- vocal melody (disc profile) ----------
+# Sung syllables become the main notes; instruments only fill the space where nobody sings.
+inst_ok = np.ones(len(grid16), bool)
+if 'vocal' in LANES:
+    cands['vocal'] = peaks_to_grid(env['vocal'], .2, allowed={0, 2})
+    vdb = 20 * np.log10(vrms + 1e-9); vdb -= vdb.max()
+    vt = librosa.frames_to_time(np.arange(len(vdb)), sr=SR, hop_length=HOP) - LAT
+    singing = np.array([vdb[(vt >= grid16[i]) & (vt < grid16[i] + 0.08)].max(initial=-99) > -25 for i in range(len(grid16))])
+    for i in range(len(grid16)):          # keep a beat of air on both sides of every sung phrase
+        inst_ok[i] = not singing[max(0, i - 4): i + 5].any()
+    print(f'singing on {singing.mean()*100:.0f}% of the song, instruments allowed on {inst_ok.mean()*100:.0f}%')
 # chord changes: chroma novelty of the guitar stem sampled on the 8th grid
 chroma = librosa.feature.chroma_cqt(y=other, sr=SR, hop_length=512)
 ct = librosa.frames_to_time(np.arange(chroma.shape[1]), sr=SR, hop_length=512) - LAT
@@ -135,12 +149,23 @@ for lane, d in cands.items():
     rank[lane] = dict(zip(d.keys(), order))
 
 # ---------- difficulty rules ----------
-RULES = {
-    'easy':   dict(pos={0},          maxsim=1, gap=4, nps=1.8, lanes={'kick', 'snare', 'guitar'}),
-    'normal': dict(pos={0, 2},       maxsim=2, gap=2, nps=3.5, lanes=set(LANES)),
-    'hard':   dict(pos={0, 1, 2, 3}, maxsim=2, gap=1, nps=5.5, lanes=set(LANES)),
+# pos: allowed 16th positions in a beat (0 = on the beat, 2 = off-beat 8th)
+# gap: min distance between notes of the same part, ggap: between any two notes (both in 16ths)
+RULES_LANES = {
+    'easy':   dict(pos={0},          maxsim=1, gap=4, ggap=0, nps=1.8, lanes={'kick', 'snare', 'guitar'}),
+    'normal': dict(pos={0, 2},       maxsim=2, gap=2, ggap=0, nps=3.5, lanes=set(LANES)),
+    'hard':   dict(pos={0, 1, 2, 3}, maxsim=2, gap=1, ggap=0, nps=5.5, lanes=set(LANES)),
 }
+# Disc game: big discs need room, so density stays low except on HARD.
+RULES_DISC = {
+    'easy':   dict(pos={0, 2}, maxsim=1, gap=4, ggap=4, nps=0.8, lanes={'kick', 'snare', 'guitar', 'vocal'}),
+    'normal': dict(pos={0, 2}, maxsim=2, gap=2, ggap=3, nps=1.5, lanes=set(LANES)),
+    'hard':   dict(pos={0, 2}, maxsim=2, gap=2, ggap=2, nps=2.8, lanes=set(LANES)),
+}
+RULES = RULES_DISC if PROFILE == 'disc' else RULES_LANES
 BONUS = {'kick': .35, 'snare': .35, 'vocal': .1, 'guitar': 0, 'hat': -.05}
+if PROFILE == 'disc':   # sparse charts: keep guitar (chord changes) in the mix so EASY isn't drums only
+    BONUS = {'kick': .3, 'snare': .3, 'vocal': .4, 'guitar': .14, 'hat': -.05}
 PRIO = {'snare': 5, 'kick': 4, 'vocal': 3, 'guitar': 2, 'hat': 1}
 dur = len(drums) / SR
 
@@ -148,16 +173,19 @@ def build(rule, q):
     by_g = {}
     for lane in rule['lanes']:
         for gi, rk in rank[lane].items():
+            if lane != 'vocal' and not inst_ok[gi]: continue      # instruments only between sung phrases
             if beat_ix[gi] in rule['pos'] and rk + BONUS[lane] >= q:
                 by_g.setdefault(gi, []).append((lane, rk))
-    notes, last = [], {l: -99 for l in LANES}
+    notes, last, last_any = [], {l: -99 for l in LANES}, -99
     for gi in sorted(by_g):
+        if gi - last_any < rule['ggap']: continue
         picked = 0
         for lane, rk in sorted(by_g[gi], key=lambda x: (-PRIO[x[0]], -x[1])):
             if picked >= rule['maxsim']: break
             if gi - last[lane] < rule['gap']: continue
             notes.append({'t': round(float(grid16[gi]), 4), 'lane': LANES.index(lane)})
             last[lane] = gi; picked += 1
+        if picked: last_any = gi
     return notes
 
 charts = {}
@@ -180,5 +208,5 @@ se = np.abs(np.array(snap_err)) * 1000
 print(f'tempo {tempo:.1f}  beats {len(beats)}  dur {dur:.1f}s  kick/snare split {SPLIT:.1f}dB  bar phase {PHASE}')
 print(f'snap error ms: median {np.median(se):.1f}  p90 {np.percentile(se, 90):.1f}')
 for k, n in charts.items():
-    cnt = np.bincount([x["lane"] for x in n], minlength=4)
+    cnt = np.bincount([x["lane"] for x in n], minlength=len(LANES))
     print(f'{k:6s} notes {len(n):4d}  nps {len(n)/dur:4.1f}  ' + str(dict(zip(LANES, cnt.tolist()))))
