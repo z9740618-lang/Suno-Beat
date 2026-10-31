@@ -1,0 +1,93 @@
+[
+ {
+  "slug": "jrock-128",
+  "title": "リバウンド・ライン",
+  "genre": "J-ROCK",
+  "bpm": 130.8,
+  "ts": 4,
+  "duration": 120.0,
+  "notes": {
+   "easy": 86,
+   "normal": 142,
+   "hard": 260
+  }
+ },
+ {
+  "slug": "ballad-72",
+  "title": "硝子の午後",
+  "genre": "バラード",
+  "bpm": 70.0,
+  "ts": 4,
+  "duration": 179.12,
+  "notes": {
+   "easy": 92,
+   "normal": 161,
+   "hard": 286
+  }
+ },
+ {
+  "slug": "funk-102",
+  "title": "ダウンタウン・ステップ",
+  "genre": "ファンク",
+  "bpm": 102.4,
+  "ts": 4,
+  "duration": 131.2,
+  "notes": {
+   "easy": 74,
+   "normal": 123,
+   "hard": 224
+  }
+ },
+ {
+  "slug": "house-124",
+  "title": "Midnight Loop",
+  "genre": "ハウス",
+  "bpm": 126.0,
+  "ts": 4,
+  "duration": 188.8,
+  "notes": {
+   "easy": 135,
+   "normal": 211,
+   "hard": 378
+  }
+ },
+ {
+  "slug": "denpa-175",
+  "title": "ピコピコ・シグナル",
+  "genre": "電波ポップ",
+  "bpm": 181.7,
+  "ts": 4,
+  "duration": 100.0,
+  "notes": {
+   "easy": 97,
+   "normal": 170,
+   "hard": 302
+  }
+ },
+ {
+  "slug": "waltz-3-4",
+  "title": "回転木馬のワルツ",
+  "genre": "ワルツ（3拍子）",
+  "bpm": 192.0,
+  "ts": 3,
+  "duration": 130.8,
+  "notes": {
+   "easy": 127,
+   "normal": 214,
+   "hard": 365
+  }
+ },
+ {
+  "slug": "too-loud-to-die",
+  "title": "Too Loud to Die",
+  "genre": "パンク",
+  "bpm": 184.6,
+  "ts": 4,
+  "duration": 116.8,
+  "notes": {
+   "easy": 110,
+   "normal": 199,
+   "hard": 359
+  }
+ }
+]
