@@ -63,15 +63,16 @@
   <div class="screen" id="menu">
     <div class="wrap">
       <h1>SUNO<span>-</span>BEAT</h1>
-      <div class="sub">落ちてくる球を、下のラインで打ち返す</div>
+      <div class="sub">滑ってくるディスクを、下のラインで打ち返す</div>
       <div class="song" id="songTitle">—</div>
       <div class="legend" id="legend"></div>
       <div class="diffs" id="diffs"></div>
-      <div class="row"><label>スピード</label><button data-s="speed" data-d="-1">−</button><output id="speedV"></output><button data-s="speed" data-d="1">＋</button></div>
+      <div class="row"><label>落下速度</label><button data-s="speed" data-d="-1">−</button><output id="speedV"></output><button data-s="speed" data-d="1">＋</button></div>
+      <div class="row"><label>音楽の音量</label><button data-s="music" data-d="-1">−</button><output id="musicV"></output><button data-s="music" data-d="1">＋</button></div>
       <div class="row"><label>判定ずらし</label><button data-s="offset" data-d="-1">−</button><output id="offsetV"></output><button data-s="offset" data-d="1">＋</button></div>
       <div class="row"><label>タッチ音</label><button data-s="sfx" data-d="-1">−</button><output id="sfxV"></output><button data-s="sfx" data-d="1">＋</button></div>
       <button class="go" id="go" disabled>LOADING…</button>
-      <div class="note">スマホは縦持ちで、球がラインに重なった瞬間にその場所をタッチ。PCはマウス、またはキーボード S D F J K（ラインを5分割）。音と判定がずれる時は「判定ずらし」（遅れて聞こえるなら＋）。</div>
+      <div class="note">スマホは縦持ちで、ディスクがラインに重なった瞬間にその場所をタッチ。白い線でつながったディスクは同時に。PCはマウス、またはキーボード S D F J K（ラインを5分割）。音と判定がずれる時は「判定ずらし」（遅れて聞こえるなら＋）。</div>
     </div>
   </div>
 
@@ -98,26 +99,28 @@ const LEAD_IN = 2.6;
 
 const $ = id => document.getElementById(id);
 const cv = $('cv'), g = cv.getContext('2d');
-let chart, ctx, rawMix, mixBuf, sfxBuf, sfxGain, src = null;
-let set = { diff: 'normal', speed: 1.0, offset: 0, sfx: 5 };
+let chart, ctx, rawMix, mixBuf, sfxBuf, sfxGain, musicGain, src = null;
+let set = { diff: 'normal', speed: 1.0, offset: 0, sfx: 3, music: 10 };
 let state = 'menu', startAt = 0, objs = [], st = {};
 const ripples = [], pops = [], wallFlash = [], shots = [];
 let comboPop = 0;
 
 // ---------- settings ----------
-try { Object.assign(set, JSON.parse(localStorage.getItem('sunobeat2') || '{}')); } catch (e) {}
-const save = () => { try { localStorage.setItem('sunobeat2', JSON.stringify(set)); } catch (e) {} };
-const STEP = { speed: [0.1, 0.5, 2.0], offset: [5, -150, 150], sfx: [1, 0, 10] };
+try { Object.assign(set, JSON.parse(localStorage.getItem('sunobeat3') || '{}')); } catch (e) {}
+const save = () => { try { localStorage.setItem('sunobeat3', JSON.stringify(set)); } catch (e) {} };
+const STEP = { speed: [0.1, 0.5, 2.0], offset: [5, -150, 150], sfx: [1, 0, 10], music: [1, 0, 15] };
 function showVals() {
   $('speedV').textContent = set.speed.toFixed(1) + 'x';
   $('offsetV').textContent = (set.offset > 0 ? '+' : '') + set.offset + 'ms';
   $('sfxV').textContent = set.sfx === 0 ? 'OFF' : set.sfx * 10 + '%';
+  $('musicV').textContent = set.music === 0 ? 'OFF' : set.music * 10 + '%';
 }
 document.querySelectorAll('.row button').forEach(b => b.addEventListener('click', () => {
   const k = b.dataset.s, [step, lo, hi] = STEP[k];
   set[k] = Math.round(Math.min(hi, Math.max(lo, set[k] + step * +b.dataset.d)) * 100) / 100;
   showVals(); save();
   if (k === 'sfx' && ctx) { setSfxGain(); playSfx(); }
+  if (k === 'music' && musicGain) musicGain.gain.value = set.music / 10;
 }));
 showVals();
 $('legend').innerHTML = PART_NAMES.map((n, i) => `<span><i style="background:${PART_COLORS[i]}"></i>${n}</span>`).join('');
@@ -129,8 +132,9 @@ function layout() {
   const dpr = Math.min(devicePixelRatio || 1, 2);
   cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const fw = Math.min(W - 16, H * 0.62);            // playfield width (portrait column on PC too)
-  F = { x: (W - fw) / 2, w: fw, top: H * 0.13, line: H * 0.83, r: fw * 0.058 };
+  const fw = Math.min(W - 12, H * 0.58);            // playfield width (portrait column on PC too)
+  // the field continues above the screen: the opponent's end is out of view, so it reads as a long table
+  F = { x: (W - fw) / 2, w: fw, top: -H * 0.38, line: H * 0.84, r: fw * 0.066 };
 }
 addEventListener('resize', layout); layout();
 const fx = xn => F.x + xn * F.w;                      // normalised 0..1 -> px
@@ -143,7 +147,7 @@ function rng(seed) { let s = seed >>> 0 || 1; return () => (s = (s * 1664525 + 1
 function buildBalls(notes, diff) {
   const R = rng(diff.length * 7919 + notes.length);
   const sorted = notes.slice().sort((a, b) => a.t - b.t || a.lane - b.lane);
-  const out = []; let prevX = 0.5, prevT = -9, prevGroupX = [];
+  const out = []; let prevX = 0.5, prevT = -9, prevGroupX = [], chordId = 0;
   const margin = 0.09;
   for (const n of sorted) {
     const gap = n.t - prevT;
@@ -162,11 +166,13 @@ function buildBalls(notes, diff) {
     const bounces = R() < 0.35 ? 0 : R() < 0.7 ? 1 : 2;
     const dir = R() < 0.5 ? -1 : 1;
     const u1 = x, u0 = x + dir * (bounces + 0.25 + R() * 0.5);
+    if (gap < 0.012 && out.length) { const prev = out[out.length - 1]; prev.chord = prev.chord ?? chordId; out.push({ t: n.t, part: n.lane, x, u0, u1, j: null, hitAt: 0, chord: prev.chord }); if (prev.chord === chordId) chordId++; continue; }
     out.push({ t: n.t, part: n.lane, x, u0, u1, j: null, hitAt: 0 });
   }
   return out;
 }
-const travel = () => 1.55 / set.speed;                // seconds from top line to judge line
+// seconds from the (off-screen) top of the field to the judge line; only the player's setting changes it
+const travel = () => 2.6 / set.speed;
 
 // ---------- load ----------
 async function load() {
@@ -188,12 +194,13 @@ function unlockAudio() {                               // must run inside the ta
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
     ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
     sfxGain = ctx.createGain(); sfxGain.connect(ctx.destination); setSfxGain();
+    musicGain = ctx.createGain(); musicGain.gain.value = set.music / 10; musicGain.connect(ctx.destination);
     sfxBuf = makeSfx();
   }
   if (ctx.state !== 'running') ctx.resume();
   const s = ctx.createBufferSource(); s.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); s.connect(ctx.destination); s.start(0);
 }
-function setSfxGain() { if (sfxGain) sfxGain.gain.value = set.sfx / 10 * 0.9; }
+function setSfxGain() { if (sfxGain) sfxGain.gain.value = set.sfx / 10 * 0.6; }
 function makeSfx() {   // round, glassy "pok": two detuned sines with a quick pitch drop + tiny noise transient
   const sr = ctx.sampleRate, n = Math.floor(sr * 0.08), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0);
   let ph1 = 0, ph2 = 0;
@@ -226,7 +233,7 @@ async function start() {
   st = { score: 0, combo: 0, max: 0, perfect: 0, great: 0, good: 0, miss: 0, cursor: 0, end: chart.duration + 1.0 };
   ripples.length = pops.length = wallFlash.length = shots.length = 0;
   startAt = ctx.currentTime + LEAD_IN;
-  src = ctx.createBufferSource(); src.buffer = mixBuf; src.connect(ctx.destination); src.start(startAt);
+  src = ctx.createBufferSource(); src.buffer = mixBuf; src.connect(musicGain); src.start(startAt);
   state = 'play';
   ['menu', 'result'].forEach(id => $(id).classList.add('hidden'));
   $('hud').style.display = 'flex';
@@ -284,7 +291,7 @@ $('quit').onclick = quit;
 // ---------- input ----------
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
-  if (e.clientY < F.top + (F.line - F.top) * 0.45) return;      // ignore taps in the upper half of the field
+  if (e.clientY < H * 0.4) return;                  // only the lower part of the screen is a touch area
   const xn = (e.clientX - F.x) / F.w;
   window.__lastTapX = xn;
   hitAt(xn, null);
@@ -303,12 +310,16 @@ function ballPos(o, t) {                               // position of an incomin
   const u = o.u0 + (o.u1 - o.u0) * p;
   return { x: fold(u), y: F.top + (F.line - F.top) * p, p, u };
 }
+// flat disc, seen from above: dark rim, flat colored face, raised inner ring, small center cap
 function drawBall(px, py, rad, col, alpha, ring) {
   g.globalAlpha = alpha;
-  const grd = g.createRadialGradient(px - rad * 0.3, py - rad * 0.35, rad * 0.1, px, py, rad);
-  grd.addColorStop(0, '#ffffff'); grd.addColorStop(0.35, col); grd.addColorStop(1, hexA(col, 0.55));
-  g.fillStyle = grd; g.beginPath(); g.arc(px, py, rad, 0, Math.PI * 2); g.fill();
-  if (ring) { g.strokeStyle = hexA('#ffffff', 0.55); g.lineWidth = 1.5; g.beginPath(); g.arc(px, py, rad * 1.28, 0, Math.PI * 2); g.stroke(); }
+  g.fillStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.arc(px + rad * 0.08, py + rad * 0.12, rad, 0, Math.PI * 2); g.fill();   // contact shadow
+  g.fillStyle = hexA(col, 0.55); g.beginPath(); g.arc(px, py, rad, 0, Math.PI * 2); g.fill();                                 // rim
+  g.fillStyle = col; g.beginPath(); g.arc(px, py, rad * 0.84, 0, Math.PI * 2); g.fill();                                     // face
+  g.strokeStyle = 'rgba(255,255,255,.75)'; g.lineWidth = Math.max(1.5, rad * 0.09);
+  g.beginPath(); g.arc(px, py, rad * 0.56, 0, Math.PI * 2); g.stroke();                                                        // inner ring
+  g.fillStyle = 'rgba(255,255,255,.9)'; g.beginPath(); g.arc(px, py, rad * 0.16, 0, Math.PI * 2); g.fill();                  // center cap
+  if (ring) { g.strokeStyle = hexA('#ffffff', 0.5); g.lineWidth = 1.5; g.beginPath(); g.arc(px, py, rad * 1.25, 0, Math.PI * 2); g.stroke(); }
   g.globalAlpha = 1;
 }
 let lastT = -99;
@@ -328,8 +339,9 @@ function draw() {
   g.restore();
   // walls
   g.fillStyle = 'rgba(238,241,246,.16)'; g.fillRect(F.x - 2, F.top, 2, F.line - F.top); g.fillRect(F.x + F.w, F.top, 2, F.line - F.top);
-  // opponent line
-  g.fillStyle = 'rgba(124,108,255,.5)'; g.fillRect(F.x, F.top - 1, F.w, 2);
+  // fade the far end into darkness so the table seems to continue
+  const fade = g.createLinearGradient(0, 0, 0, H * 0.22);
+  fade.addColorStop(0, 'rgba(7,8,12,.95)'); fade.addColorStop(1, 'rgba(7,8,12,0)');
 
   if (state === 'play') {
     const T = travel();
@@ -343,28 +355,41 @@ function draw() {
         wallFlash.push({ side, y: b.y, at: now, part: o.part });
       }
     }
-    // incoming balls (draw far ones first)
+    // chord links: a bar joining discs that must be hit together
+    const seen = {};
+    for (let i = st.cursor; i < Math.min(objs.length, st.cursor + 160); i++) {
+      const o = objs[i]; if (o.chord === undefined || o.j) continue;
+      const pos = ballPos(o, t); if (pos.p < 0 || pos.p > 1) continue;
+      (seen[o.chord] = seen[o.chord] || []).push(fx(pos.x));
+      if (seen[o.chord].length === 2) {
+        const [xa, xb] = seen[o.chord].sort((m, n) => m - n), y = pos.y;
+        g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = Math.max(3, F.r * 0.22); g.lineCap = 'round';
+        g.beginPath(); g.moveTo(xa, y); g.lineTo(xb, y); g.stroke();
+        g.strokeStyle = 'rgba(124,108,255,.9)'; g.lineWidth = Math.max(1.5, F.r * 0.1);
+        g.beginPath(); g.moveTo(xa, y); g.lineTo(xb, y); g.stroke(); g.lineCap = 'butt';
+      }
+    }
+    // incoming discs (draw far ones first)
     for (let i = Math.min(objs.length - 1, st.cursor + 160); i >= Math.max(0, st.cursor - 6); i--) {
       const o = objs[i]; if (o.j && o.j !== 'miss') continue;
       const pos = ballPos(o, t); if (pos.p < 0 || pos.p > 1.25) continue;
-      const rad = F.r * PART_SIZE[o.part] * (0.75 + 0.25 * Math.min(1, pos.p));
-      const fadeIn = Math.min(1, pos.p * 6), fadeOut = pos.p > 1 ? Math.max(0, 1 - (pos.p - 1) * 4) : 1;
-      drawBall(fx(pos.x), pos.y, rad, o.j === 'miss' ? '#5c6070' : PART_COLORS[o.part], fadeIn * fadeOut, pos.p > 0.82 && !o.j);
+      const rad = F.r * PART_SIZE[o.part];
+      const fadeIn = 1, fadeOut = pos.p > 1 ? Math.max(0, 1 - (pos.p - 1) * 4) : 1;
+      drawBall(fx(pos.x), pos.y, rad, o.j === 'miss' ? '#5c6070' : PART_COLORS[o.part], fadeIn * fadeOut, o.chord !== undefined && !o.j);
       // landing marker on the judge line
-      if (!o.j && pos.p > 0.55 && pos.p <= 1) {
-        const a = (pos.p - 0.55) / 0.45;
+      if (!o.j && pos.p > 0.8 && pos.p <= 1) {
+        const a = (pos.p - 0.8) / 0.2;
         g.strokeStyle = hexA(PART_COLORS[o.part], 0.25 + 0.5 * a); g.lineWidth = 2;
         g.beginPath(); g.arc(fx(o.x), F.line, F.r * PART_SIZE[o.part] * (1.9 - 0.9 * a), Math.PI, 2 * Math.PI); g.stroke();
       }
     }
     // returned shots fly back up to the opponent
     for (let i = shots.length - 1; i >= 0; i--) {
-      const s = shots[i], q = (now - s.at) / 420;
+      const s = shots[i], q = (now - s.at) / 600;
       if (q >= 1) { shots.splice(i, 1); continue; }
       const o = s.o, u = o.u1 + (o.u1 - o.u0) * q * 0.9;
       const y = F.line - (F.line - F.top) * q;
       drawBall(fx(fold(u)), y, F.r * PART_SIZE[o.part] * (1 - q * 0.4), PART_COLORS[o.part], 1 - q * 0.6, false);
-      if (q > 0.85) { g.fillStyle = hexA(PART_COLORS[o.part], (q - 0.85) * 4); g.fillRect(F.x, F.top - 3, F.w, 6); }
     }
     sweepMisses(t);
     if (t > st.end) finish();
@@ -381,6 +406,7 @@ function draw() {
     g.fillStyle = grd; g.fillRect(x - F.r * 2.4, f.y - F.r * 2.4, F.r * 4.8, F.r * 4.8);
   }
 
+  g.fillStyle = fade; g.fillRect(0, 0, W, H * 0.22);
   // judge line + touch zone
   const lg = g.createLinearGradient(F.x, 0, F.x + F.w, 0);
   lg.addColorStop(0, 'rgba(124,108,255,.35)'); lg.addColorStop(0.5, 'rgba(238,241,246,.95)'); lg.addColorStop(1, 'rgba(124,108,255,.35)');
