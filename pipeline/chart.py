@@ -1,13 +1,19 @@
 """Auto-chart generator: stems + beat grid -> lane notes for 3 difficulties.
 
-usage: python3 pipeline/chart.py <stems_dir> <title> <out_chart.json> [disc|lanes]
+usage: python3 pipeline/chart.py <stems_dir> <title> <out_chart.json> [disc|lanes] [--suno=songs/<slug>/suno.json] [--bpm=<rough tempo>]
+  --suno: Suno's analysis for songs made through Suno MCP. When given, Suno's beats, time signature
+          and word timings replace the audio-only guesses (tempo, singing spans, phrase heads).
+  --bpm : rough tempo hint for songs without Suno analysis (audio-only tracking confuses double/half tempo).
   disc  (default): sparse charts for the portrait disc game (web2) - big discs, wide hit areas
   lanes          : denser 4-lane charts for the first prototype (web)
   stems_dir: Demucs htdemucs (4-stem) output folder containing drums/bass/other/vocals.wav
 """
 import librosa, numpy as np, json, sys, scipy.signal as sg
-STEMS_DIR, TITLE, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
-PROFILE = sys.argv[4] if len(sys.argv) > 4 else 'disc'
+ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
+OPTS = dict(a[2:].split('=', 1) for a in sys.argv[1:] if a.startswith('--') and '=' in a)
+STEMS_DIR, TITLE, OUT = ARGS[0], ARGS[1], ARGS[2]
+PROFILE = ARGS[3] if len(ARGS) > 3 else 'disc'
+SUNO = json.load(open(OPTS['suno'])) if 'suno' in OPTS else None
 
 SR = 22050
 HOP = 256
@@ -20,9 +26,19 @@ def load(name):
 drums, other, vocals, bass = load('drums'), load('other'), load('vocals'), load('bass')
 
 # ---------- beat grid ----------
-tempo, beats = librosa.beat.beat_track(y=drums, sr=SR, units='time', start_bpm=180, tightness=200)
-tempo = float(np.atleast_1d(tempo)[0])
-beats = np.asarray(beats)
+if SUNO:
+    beats = np.array([b[0] for b in SUNO['beats']], float)
+    tempo = float(SUNO['bpm']) if SUNO.get('bpm') else 60 / float(np.median(np.diff(beats)))
+    TS = int(SUNO.get('time_signature') or 4)
+else:
+    # audio alone can't tell double/half tempo apart: pass --bpm=<rough tempo> (e.g. from the Suno prompt);
+    # 120 is only a neutral default
+    tempo, beats = librosa.beat.beat_track(y=drums, sr=SR, units='time', start_bpm=float(OPTS.get('bpm', 120)), tightness=200)
+    tempo = float(np.atleast_1d(tempo)[0])
+    beats = np.asarray(beats)
+    TS = 4
+BEAT = float(np.median(np.diff(beats)))      # seconds per beat
+SLOW16 = BEAT / 4 >= 0.14                     # 16ths are playable (<= ~107 BPM): allow them for syncopation
 # 16th-note grid by interpolating between tracked beats (follows live tempo drift)
 grid16 = []
 for a, b in zip(beats[:-1], beats[1:]):
@@ -73,7 +89,9 @@ for b in beats:
     j = np.argmin(np.abs(pt - b))
     if abs(pt[j] - b) < 0.11:
         offs.append(pt[j] - b)
-OFFSET = float(np.median(offs))
+OFFSET = float(np.median(offs)) if offs else 0.0
+if SUNO and abs(OFFSET) > 0.04:   # Suno's beats are trusted; only nudge them, never move them a lot
+    OFFSET = 0.0
 print(f'grid offset correction {OFFSET*1000:.1f} ms (from {len(offs)} beats)')
 beats = beats + OFFSET
 grid16 = grid16 + OFFSET
@@ -111,7 +129,37 @@ cands['guitar'] = peaks_to_grid(env['guitar'], .2)
 # ---------- vocal melody (disc profile) ----------
 # Sung syllables become the main notes; instruments only fill the space where nobody sings.
 inst_ok = np.ones(len(grid16), bool)
-if 'vocal' in LANES:
+def clean_words(words):
+    """Suno word timings minus obviously broken ones (very long, or starting far after the next word)."""
+    w = [(s_, e_) for _, s_, e_, _ in words if e_ > s_]
+    keep = []
+    for i, (s_, e_) in enumerate(w):
+        nxt = w[i + 1][0] if i + 1 < len(w) else None
+        if e_ - s_ > 1.5 or (nxt is not None and s_ - nxt > 0.5): continue
+        keep.append((s_, e_))
+    return keep
+heads = set()
+if 'vocal' in LANES and SUNO:
+    # singing = where Suno says words are sung; phrase heads = starts of Suno's word chunks
+    words = clean_words(SUNO.get('words', []))
+    singing = np.zeros(len(grid16), bool)
+    for s_, e_ in words:
+        singing |= (grid16 >= s_ - 0.05) & (grid16 <= e_ + 0.05)
+    for i in range(len(grid16)):
+        inst_ok[i] = not singing[max(0, i - 4): i + 5].any()
+    raw = peaks_to_grid(env['vocal'], .2, allowed={0, 1, 2, 3} if SLOW16 else {0, 2})
+    cands['vocal'] = {gi: v for gi, v in raw.items() if singing[gi]}      # syllables only while really singing
+    for s_, _ in words:
+        gi = int(np.argmin(np.abs(grid16 - s_)))
+        # snap the phrase head to the nearest 8th within 120ms
+        okpos = (0, 1, 2, 3) if SLOW16 else (0, 2)
+        best = min((g for g in range(max(0, gi - 2), min(len(grid16), gi + 3)) if beat_ix[g] in okpos),
+                   key=lambda g: abs(grid16[g] - s_), default=None)
+        if best is not None and abs(grid16[best] - s_) <= 0.12:
+            cands['vocal'][best] = max(cands['vocal'].get(best, 0), 2.0); heads.add(best)
+    print(f'singing on {singing.mean()*100:.0f}% of the song (Suno lyrics, {len(words)} words), '
+          f'instruments allowed on {inst_ok.mean()*100:.0f}%, phrase heads {len(heads)}')
+elif 'vocal' in LANES:
     cands['vocal'] = peaks_to_grid(env['vocal'], .2, allowed={0, 2})
     vdb = 20 * np.log10(vrms + 1e-9); vdb -= vdb.max()
     vt = librosa.frames_to_time(np.arange(len(vdb)), sr=SR, hop_length=HOP) - LAT
@@ -136,10 +184,15 @@ for gi, v in nov.items():
     if v >= thr:
         cands['guitar'][gi] = max(cands['guitar'].get(gi, 0), 1.0 + v)   # chord change outranks plain onsets
 
-# bar phase: downbeat = the beat phase where kick is most common
-kb = [gi // 4 for gi in cands['kick'] if beat_ix[gi] == 0]
-PHASE = int(np.argmax(np.bincount(np.array(kb) % 4, minlength=4))) if kb else 0
-bars = beats[PHASE::4]
+# bar phase: Suno's majority downbeat (its bar numbers glitch locally, so recount with the time signature);
+# otherwise the beat phase where kick is most common
+if SUNO:
+    ones = [i for i, b in enumerate(SUNO['beats']) if b[1] == 1]
+    PHASE = int(np.argmax(np.bincount(np.array(ones) % TS, minlength=TS))) if ones else 0
+else:
+    kb = [gi // 4 for gi in cands['kick'] if beat_ix[gi] == 0]
+    PHASE = int(np.argmax(np.bincount(np.array(kb) % 4, minlength=4))) if kb else 0
+bars = beats[PHASE::TS]
 
 # strength -> percentile rank within lane so one threshold works for every lane
 rank = {}
@@ -157,11 +210,15 @@ RULES_LANES = {
     'hard':   dict(pos={0, 1, 2, 3}, maxsim=2, gap=1, ggap=0, nps=5.5, lanes=set(LANES)),
 }
 # Disc game: big discs need room, so density stays low except on HARD.
+# Density is set per BEAT (so it follows the song's tempo), clamped to a per-second range.
+# Gaps are in seconds so fast songs automatically get fewer off-beat notes.
 RULES_DISC = {
-    'easy':   dict(pos={0, 2}, maxsim=1, gap=4, ggap=4, nps=0.8, lanes={'kick', 'snare', 'guitar', 'vocal'}),
-    'normal': dict(pos={0, 2}, maxsim=2, gap=2, ggap=3, nps=1.5, lanes=set(LANES)),
-    'hard':   dict(pos={0, 2}, maxsim=2, gap=2, ggap=2, nps=2.8, lanes=set(LANES)),
+    'easy':   dict(pos={0, 2}, maxsim=1, chords=0.00, npb=0.30, nps_lo=0.5, nps_hi=1.0, gap_s=0.60, ggap_s=0.45,
+                   lanes={'kick', 'snare', 'guitar', 'vocal'}),
+    'normal': dict(pos={0, 2}, maxsim=2, chords=0.06, npb=0.55, nps_lo=0.9, nps_hi=1.8, gap_s=0.30, ggap_s=0.28, lanes=set(LANES)),
+    'hard':   dict(pos={0, 2}, maxsim=2, chords=0.12, npb=1.00, nps_lo=1.6, nps_hi=3.2, gap_s=0.16, ggap_s=0.16, lanes=set(LANES)),
 }
+MAX_EMPTY_BEATS = 8      # never leave more than 2 bars (in 4/4) without a note if anything playable is there
 RULES = RULES_DISC if PROFILE == 'disc' else RULES_LANES
 BONUS = {'kick': .35, 'snare': .35, 'vocal': .1, 'guitar': 0, 'hat': -.05}
 if PROFILE == 'disc':   # sparse charts: keep guitar (chord changes) in the mix so EASY isn't drums only
@@ -169,36 +226,88 @@ if PROFILE == 'disc':   # sparse charts: keep guitar (chord changes) in the mix 
 PRIO = {'snare': 5, 'kick': 4, 'vocal': 3, 'guitar': 2, 'hat': 1}
 dur = len(drums) / SR
 
-def build(rule, q):
-    by_g = {}
+def eligible(rule):
+    """(grid index, lane, score) for every candidate this difficulty may use."""
+    out = []
     for lane in rule['lanes']:
         for gi, rk in rank[lane].items():
             if lane != 'vocal' and not inst_ok[gi]: continue      # instruments only between sung phrases
-            if beat_ix[gi] in rule['pos'] and rk + BONUS[lane] >= q:
-                by_g.setdefault(gi, []).append((lane, rk))
-    notes, last, last_any = [], {l: -99 for l in LANES}, -99
+            # slow songs: 16ths allowed (EASY only for phrase heads, so a syncopated sung entry still lands)
+            slow_ok = SLOW16 and 'ggap_s' in rule and (rule is not RULES_DISC['easy'] or gi in heads)
+            if beat_ix[gi] in rule['pos'] or slow_ok:
+                out.append((gi, lane, rk + BONUS[lane] + (1.0 if gi in heads else 0)))
+    return out
+
+def build(rule, q):
+    by_g = {}
+    for gi, lane, sc in eligible(rule):
+        if sc >= q: by_g.setdefault(gi, []).append((lane, sc))
+    use_s = 'ggap_s' in rule
+    notes, last, last_any = [], {l: -1e9 for l in LANES}, -1e9
     for gi in sorted(by_g):
-        if gi - last_any < rule['ggap']: continue
+        pos = grid16[gi] if use_s else gi
+        if pos - last_any < (rule['ggap_s'] if use_s else rule['ggap']): continue
         picked = 0
-        for lane, rk in sorted(by_g[gi], key=lambda x: (-PRIO[x[0]], -x[1])):
+        for lane, sc in sorted(by_g[gi], key=lambda x: (-x[1] if x[0] == 'vocal' else 0, -PRIO[x[0]], -x[1])):
             if picked >= rule['maxsim']: break
-            if gi - last[lane] < rule['gap']: continue
-            notes.append({'t': round(float(grid16[gi]), 4), 'lane': LANES.index(lane)})
-            last[lane] = gi; picked += 1
-        if picked: last_any = gi
+            if pos - last[lane] < (rule['gap_s'] if use_s else rule['gap']): continue
+            notes.append({'t': round(float(grid16[gi]), 4), 'lane': LANES.index(lane), 'gi': gi, 'sc': sc})
+            last[lane] = pos; picked += 1
+        if picked: last_any = pos
     return notes
 
+def limit_chords(notes, rule):
+    """Cap simultaneous notes at a share of the chart: drop the weaker half of the weakest chords."""
+    by = {}
+    for n in notes: by.setdefault(n['gi'], []).append(n)
+    chords = sorted((g for g in by.values() if len(g) > 1), key=lambda g: min(x['sc'] for x in g))
+    allow = int(rule['chords'] * len(notes))
+    drop = set()
+    for g in chords[:max(0, len(chords) - allow)]:
+        drop.add(id(min(g, key=lambda x: x['sc'])))
+    return [n for n in notes if id(n) not in drop]
+
+def fill_gaps(notes, rule):
+    """Long stretches without notes feel broken: add the best playable candidate inside each one."""
+    elig = sorted(eligible(rule), key=lambda x: -x[2])
+    times = lambda: sorted(n['t'] for n in notes)
+    for _ in range(200):
+        t = times()
+        edges = [elig_t0] + t + [elig_t1]
+        gaps = [(b - a, a, b) for a, b in zip(edges[:-1], edges[1:]) if b - a > MAX_EMPTY_BEATS * BEAT]
+        if not gaps: break
+        added = False
+        for _, a, b in sorted(gaps, reverse=True):
+            mid = (a + b) / 2
+            cand = [(abs(grid16[gi] - mid) / (b - a) - sc * 0.3, gi, lane) for gi, lane, sc in elig
+                    if a + rule['ggap_s'] * 2 < grid16[gi] < b - rule['ggap_s'] * 2]
+            if cand:
+                _, gi, lane = min(cand)
+                notes.append({'t': round(float(grid16[gi]), 4), 'lane': LANES.index(lane), 'gi': gi}); added = True
+        if not added: break
+    notes.sort(key=lambda n: (n['t'], n['lane']))
+    return notes
+
+all_c = [grid16[gi] for d in cands.values() for gi in d]
+elig_t0, elig_t1 = (min(all_c), max(all_c)) if all_c else (0, dur)
 charts = {}
 for k, r in RULES.items():
-    lo, hi = 0.0, 1.5
-    for _ in range(25):                       # binary search threshold to hit target density
+    target = r['nps'] if 'nps' in r else min(r['nps_hi'], max(r['nps_lo'], r['npb'] / BEAT))
+    lo, hi = 0.0, 3.0
+    for _ in range(30):                       # binary search threshold to hit target density
         mid = (lo + hi) / 2
-        if len(build(r, mid)) / dur > r['nps']: lo = mid
+        if len(build(r, mid)) / dur > target: lo = mid
         else: hi = mid
-    charts[k] = build(r, hi)
+    notes = build(r, hi)
+    if 'ggap_s' in r:
+        notes = limit_chords(notes, r)
+        notes = fill_gaps(notes, r)
+    for n in notes: n.pop('gi', None); n.pop('sc', None)
+    charts[k] = notes
 
 out = {
-    'title': TITLE, 'bpm': round(tempo, 1), 'duration': round(dur, 2),
+    'title': TITLE, 'bpm': round(tempo, 1), 'time_signature': TS, 'beat_source': 'suno' if SUNO else 'audio',
+    'duration': round(dur, 2),
     'lanes': LANES, 'beats': [round(float(b), 4) for b in beats],
     'bars': [round(float(b), 4) for b in bars], 'charts': charts,
 }
